@@ -34,6 +34,7 @@ struct BlobfsBdevCreateContext {
     bdev_name: CString,
     cb_fn: spdk_blobfs_bdev_op_complete,
     cb_arg: *mut c_void,
+    bdev: *mut spdk_bs_dev,
 }
 
 extern "C" fn spdk_bdev_create_bs_dev_ext_complete(
@@ -65,14 +66,13 @@ extern "C" fn spdk_fs_init_complete(ctx: *mut c_void, fs: *mut spdk_filesystem, 
         // Operation succeeded.
         println!("Filesystem init operation completed. Context: {:?}", ctx);
         println!("Filesystem pointer: {:?}", fs);
-        let thread_ctx: *mut spdk_fs_thread_ctx = spdk_fs_alloc_thread_ctx_wrapper(fs);
-        let file_name = "example.txt".as_ptr() as *const c_char;
-        print!("Creating file: {:?}\n", file_name);
-        let status = spdk_fs_create_file_wrapper(fs, thread_ctx, file_name);
-        if status == 0 {
-            println!("File created successfully!");
-        } else {
-            println!("File creation failed with error code: {}", status);
+        unsafe {
+            spdk_fs_load(
+                (*(ctx as *mut BlobfsBdevCreateContext)).bdev,
+                None,
+                Some(spdk_fs_load_complete),
+                ctx,
+            )
         }
     }
     return;
@@ -86,6 +86,22 @@ extern "C" fn spdk_fs_load_complete(ctx: *mut c_void, fs: *mut spdk_filesystem, 
         // Operation succeeded.
         println!("Filesystem load operation completed. Context: {:?}", ctx);
         println!("Filesystem pointer: {:?}", fs);
+
+        let thread_ctx: *mut spdk_fs_thread_ctx = spdk_fs_alloc_thread_ctx_wrapper(fs);
+        if thread_ctx.is_null() {
+            println!("Thread context is null");
+        } else {
+            println!("Thread context is not null");
+        }
+
+        let file_name = "example.txt".as_ptr() as *const c_char;
+        print!("Creating file: {:?}\n", file_name);
+        let status = spdk_fs_create_file_wrapper(fs, thread_ctx, file_name);
+        if status == 0 {
+            println!("File created successfully!");
+        } else {
+            println!("File creation failed with error code: {}", status);
+        }
     }
     return;
 }
@@ -97,18 +113,18 @@ fn blobfs_bdev_create(
     cb_fn: spdk_blobfs_bdev_op_complete,
     cb_arg: *mut c_void,
 ) {
+    let mut bs_dev: *mut *mut spdk_bs_dev = &mut std::ptr::null_mut();
+    let mut blobfs_opt: spdk_blobfs_opts = Default::default();
     // Create a callback context
     let context = Box::new(BlobfsBdevCreateContext {
         bdev_name: CString::new(bdev_name).expect("CString creation failed"),
         cb_fn,
         cb_arg,
+        bdev: unsafe { *bs_dev },
     });
 
-    // Allocate memory for the SPDK context
     let ctx_ptr = Box::into_raw(context);
-
-    let mut bs_dev: *mut *mut spdk_bs_dev = &mut std::ptr::null_mut();
-    let mut blobfs_opt: spdk_blobfs_opts = Default::default();
+    // Allocate memory for the SPDK context
 
     let rc = unsafe {
         // Create a blobstore block device from the bdev
@@ -173,6 +189,7 @@ fn blobfs_bdev_create(
 
     // Initialize the file system
     unsafe {
+        (*ctx_ptr).bdev = *bs_dev;
         spdk_fs_init(
             *bs_dev,
             &mut blobfs_opt,
