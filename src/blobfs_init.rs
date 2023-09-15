@@ -28,6 +28,7 @@ use spdk_rs::libspdk::{
     spdk_parse_capacity, spdk_strerror, SPDK_APP_PARSE_ARGS_SUCCESS,
     SPDK_JSONRPC_ERROR_INTERNAL_ERROR, SPDK_JSONRPC_ERROR_INVALID_PARAMS, SPDK_JSON_VAL_STRING,
     spdk_event_call, spdk_event_allocate, fs_request_fn,spdk_fs_create_file_async,
+    spdk_fs_file_stat_async, spdk_fs_open_file_async, spdk_file_stat
 };
 
 // Define a custom struct to capture the callback context
@@ -37,6 +38,12 @@ struct BlobfsBdevCreateContext {
     cb_arg: *mut c_void,
     bdev: *mut spdk_bs_dev,
 }
+
+struct FileOpContext {
+    sfs: *mut spdk_filesystem,
+}
+
+//const c_char name = "example_file.txt".as_ptr()
 
 extern "C" fn spdk_bdev_create_bs_dev_ext_complete(
     event_type: spdk_bdev_event_type,
@@ -93,26 +100,59 @@ extern "C" fn spdk_fs_load_complete(ctx: *mut c_void, fs: *mut spdk_filesystem, 
         println!("Filesystem pointer: {:?}", fs);
         let file_name = "example";
         let file_name_cstr = std::ffi::CString::new(file_name).unwrap();
-        print!("Creating file: {:?}\n", file_name);
+        let name = "example_file.txt".as_ptr() as *const c_char;
+        print!("Creating file: {:?}\n", name);
         
-
-        
-       let name = "example_file.txt".as_ptr() as *const c_char;
-       
-       unsafe {spdk_fs_create_file_async(fs, name, Some(file_create_cb), std::ptr::null_mut());
-       
+        let context = Box::new(FileOpContext {
+            sfs: fs
+        });
+        let ctx_ptr = Box::into_raw(context);
+        unsafe {
+            spdk_fs_create_file_async(fs, name, Some(file_create_cb), ctx_ptr as *mut c_void);
         }
     }
     return;
 }
 
-unsafe extern "C" fn file_create_cb(ctx: *mut ::std::os::raw::c_void, fserrno: c_int) {
+/* TODO: Create a vector to store spdk_file structures and return the index as fd */
+/*
+unsafe extern "C" fn file_open_cb(ctx: *mut ::std::os::raw::c_void, f: *mut spdk_file, fserrno: c_int) {
+    if fserrno == 0 {
+        println!("File opened successfully!");
+        let context = ctx as *mut FileOpContext
+        (*context).fp = p
+        spdk_fs_write_file_async
+
+    } else {
+        println!("File stat failed with error code: {}", fserrno);
+    }
+}
+*/
+
+
+unsafe extern "C" fn file_stat_cb(ctx: *mut ::std::os::raw::c_void, stat: *mut spdk_file_stat, fserrno: c_int) {
+    if fserrno == 0 {
+        println!("File stat successful!");
+        println!("blobid: {:?}, size: {:?}", (*stat).blobid, (*stat).size);
+    } else {
+        println!("File stat failed with error code: {}", fserrno);
+    }
+}
+
+extern "C" fn file_create_cb(ctx: *mut ::std::os::raw::c_void, fserrno: c_int) {
     if fserrno == 0 {
         println!("File creation successful!");
+        let name = "example_file.txt".as_ptr() as *const c_char;
+        unsafe {
+            spdk_fs_file_stat_async((*(ctx as *mut FileOpContext)).sfs, name, Some(file_stat_cb),
+                ctx)
+            //spdk_fs_open_file_async((*(ctx as *mut FileOpContext)).sfs, name, 0, ctx)
+        }                       
     } else {
         println!("File creation failed with error code: {}", fserrno);
     }
 }
+
 
 // Define the blobfs_bdev_create function in Rust
 fn blobfs_bdev_create(
@@ -248,15 +288,15 @@ extern "C" fn call_fn(arg1: *mut libc::c_void, arg2: *mut libc::c_void) {
         let fn_ptr = unsafe { std::mem::transmute::<*mut std::ffi::c_void, fs_request_fn>(arg1) };
      //   let fn_ptr = fn_ptr.unwrap();
        // let fn_ptr = unsafe { std::mem::transmute::<*mut std::ffi::c_void, fs_request_fn>(arg1) };
-    if let Some(call_fn) = fn_ptr {
-        call_fn(arg2);
-    }
+        if let Some(call_fn) = fn_ptr {
+            call_fn(arg2);
+        }
     }  // fn_ptr(arg2);
-    }
+}
     
-    extern "C" fn _send_request(__fn: fs_request_fn, arg: *mut c_void)
-    { unsafe{
-        let event = spdk_event_allocate(0, Some(call_fn), std::mem::transmute(__fn), arg);
+extern "C" fn _send_request(__fn: fs_request_fn, arg: *mut c_void)
+{ unsafe{
+    let event = spdk_event_allocate(0, Some(call_fn), std::mem::transmute(__fn), arg);
     spdk_event_call(event);
-            }
-    }
+        }
+}
