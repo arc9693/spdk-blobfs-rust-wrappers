@@ -1,0 +1,51 @@
+{
+  "subsystems": [
+    {
+      "subsystem": "bdev",
+      "config": [
+        {
+          "method": "bdev_malloc_create",
+          "params": {
+            "name": "Malloc0",
+            "num_blocks": 32768,
+            "block_size": 4096
+          }
+        }
+      ]
+    },
+
+ 
+
+    {
+      "subsystem": "blobfs",
+      "config": [
+        {
+          "method": "blobfs_set_cache_size",
+          "params": {
+            "size_in_mb": 512
+
+ 
+
+          }
+        }
+      ]
+    },
+
+ 
+
+  {
+      "subsystem": "blobfs",
+      "config": [
+        {
+          "method": "blobfs_create",
+          "params": {
+            "bdev_name": "Malloc0"
+
+ 
+
+          }
+        }
+      ]
+    }
+  ]
+}
