@@ -41,6 +41,7 @@ struct BlobfsBdevCreateContext {
 
 struct FileOpContext {
     sfs: *mut spdk_filesystem,
+    fp: *mut spdk_file
 }
 
 //const c_char name = "example_file.txt".as_ptr()
@@ -115,7 +116,7 @@ extern "C" fn spdk_fs_load_complete(ctx: *mut c_void, fs: *mut spdk_filesystem, 
 }
 
 /* TODO: Create a vector to store spdk_file structures and return the index as fd */
-/*
+/* WIP */
 unsafe extern "C" fn file_open_cb(ctx: *mut ::std::os::raw::c_void, f: *mut spdk_file, fserrno: c_int) {
     if fserrno == 0 {
         println!("File opened successfully!");
@@ -127,7 +128,7 @@ unsafe extern "C" fn file_open_cb(ctx: *mut ::std::os::raw::c_void, f: *mut spdk
         println!("File stat failed with error code: {}", fserrno);
     }
 }
-*/
+
 
 
 unsafe extern "C" fn file_stat_cb(ctx: *mut ::std::os::raw::c_void, stat: *mut spdk_file_stat, fserrno: c_int) {
@@ -146,7 +147,7 @@ extern "C" fn file_create_cb(ctx: *mut ::std::os::raw::c_void, fserrno: c_int) {
         unsafe {
             spdk_fs_file_stat_async((*(ctx as *mut FileOpContext)).sfs, name, Some(file_stat_cb),
                 ctx)
-            //spdk_fs_open_file_async((*(ctx as *mut FileOpContext)).sfs, name, 0, ctx)
+            spdk_fs_open_file_async((*(ctx as *mut FileOpContext)).sfs, name, 0, ctx)
         }                       
     } else {
         println!("File creation failed with error code: {}", fserrno);
