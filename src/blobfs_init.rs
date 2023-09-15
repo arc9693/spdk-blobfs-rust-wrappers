@@ -27,6 +27,7 @@ use spdk_rs::libspdk::{
     spdk_jsonrpc_request, spdk_jsonrpc_send_bool_response, spdk_jsonrpc_send_error_response,
     spdk_parse_capacity, spdk_strerror, SPDK_APP_PARSE_ARGS_SUCCESS,
     SPDK_JSONRPC_ERROR_INTERNAL_ERROR, SPDK_JSONRPC_ERROR_INVALID_PARAMS, SPDK_JSON_VAL_STRING,
+    spdk_event_call, spdk_event_allocate, fs_request_fn,spdk_fs_create_file_async,
 };
 
 // Define a custom struct to capture the callback context
@@ -58,6 +59,8 @@ pub fn spdk_fs_create_file_wrapper(
     unsafe { spdk_fs_create_file(fs, ctx, name) }
 }
 
+
+
 extern "C" fn spdk_fs_init_complete(ctx: *mut c_void, fs: *mut spdk_filesystem, fserrno: c_int) {
     if fserrno != 0 {
         // Handle error.
@@ -66,14 +69,16 @@ extern "C" fn spdk_fs_init_complete(ctx: *mut c_void, fs: *mut spdk_filesystem, 
         // Operation succeeded.
         println!("Filesystem init operation completed. Context: {:?}", ctx);
         println!("Filesystem pointer: {:?}", fs);
+        
         unsafe {
             spdk_fs_load(
                 (*(ctx as *mut BlobfsBdevCreateContext)).bdev,
-                None,
+                Some(_send_request),
                 Some(spdk_fs_load_complete),
                 ctx,
             )
         }
+        
     }
     return;
 }
@@ -86,24 +91,27 @@ extern "C" fn spdk_fs_load_complete(ctx: *mut c_void, fs: *mut spdk_filesystem, 
         // Operation succeeded.
         println!("Filesystem load operation completed. Context: {:?}", ctx);
         println!("Filesystem pointer: {:?}", fs);
-
-        let thread_ctx: *mut spdk_fs_thread_ctx = spdk_fs_alloc_thread_ctx_wrapper(fs);
-        if thread_ctx.is_null() {
-            println!("Thread context is null");
-        } else {
-            println!("Thread context is not null");
-        }
-
-        let file_name = "example.txt".as_ptr() as *const c_char;
+        let file_name = "example";
+        let file_name_cstr = std::ffi::CString::new(file_name).unwrap();
         print!("Creating file: {:?}\n", file_name);
-        let status = spdk_fs_create_file_wrapper(fs, thread_ctx, file_name);
-        if status == 0 {
-            println!("File created successfully!");
-        } else {
-            println!("File creation failed with error code: {}", status);
+        
+
+        
+       let name = "example_file.txt".as_ptr() as *const c_char;
+       
+       unsafe {spdk_fs_create_file_async(fs, name, Some(file_create_cb), std::ptr::null_mut());
+       
         }
     }
     return;
+}
+
+unsafe extern "C" fn file_create_cb(ctx: *mut ::std::os::raw::c_void, fserrno: c_int) {
+    if fserrno == 0 {
+        println!("File creation successful!");
+    } else {
+        println!("File creation failed with error code: {}", fserrno);
+    }
 }
 
 // Define the blobfs_bdev_create function in Rust
@@ -187,17 +195,16 @@ fn blobfs_bdev_create(
         blobfs_opt.cluster_sz = cluster_sz;
     }
 
-    // Initialize the file system
     unsafe {
-        (*ctx_ptr).bdev = *bs_dev;
-        spdk_fs_init(
-            *bs_dev,
-            &mut blobfs_opt,
-            None, // Pass the blobfs_bdev_load_cb_to_unload function here if needed
-            Some(spdk_fs_init_complete),
+        spdk_fs_load
+            ( *bs_dev,
+            Some(_send_request),
+            Some(spdk_fs_load_complete),
             ctx_ptr as *mut c_void,
-        );
+        
+        )
     }
+
 
     // Free the allocated memory
     unsafe { Box::from_raw(ctx_ptr) };
@@ -233,3 +240,23 @@ pub extern "C" fn blobfs_create(_arg: *mut c_void) {
         );
     }
 }
+
+
+extern "C" fn call_fn(arg1: *mut libc::c_void, arg2: *mut libc::c_void) {
+    unsafe{
+        //let fn_ptr = arg1 as fs_request_fn;
+        let fn_ptr = unsafe { std::mem::transmute::<*mut std::ffi::c_void, fs_request_fn>(arg1) };
+     //   let fn_ptr = fn_ptr.unwrap();
+       // let fn_ptr = unsafe { std::mem::transmute::<*mut std::ffi::c_void, fs_request_fn>(arg1) };
+    if let Some(call_fn) = fn_ptr {
+        call_fn(arg2);
+    }
+    }  // fn_ptr(arg2);
+    }
+    
+    extern "C" fn _send_request(__fn: fs_request_fn, arg: *mut c_void)
+    { unsafe{
+        let event = spdk_event_allocate(0, Some(call_fn), std::mem::transmute(__fn), arg);
+    spdk_event_call(event);
+            }
+    }
